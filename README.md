@@ -18,9 +18,7 @@ Pytorch implementation of StrainNet-3D.
 - torch with cuda (torch1.9.0+cu111)
 
 ## Workflow
-* (Optional) Give stereo calibration parameters and other settings in ```./Seeds/input.py```
-* (Optional) Generate your own seeds by running ```input.py```
-* Run ```main.py```
+***
 
 ## Pre-trained model
 - Pre-trained parameter file of SubpixelCorrNet can be download from [Google drive](https://drive.google.com/drive/folders/17fP3m60Ab5OKycFhSUtXHN4j7IToi5Np?usp=sharing).
