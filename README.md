@@ -17,8 +17,18 @@ Pytorch implementation of StrainNet-3D.
 - numpy (1.22.1 used)
 - torch with cuda (torch1.9.0+cu111)
 
-## Workflow
-***
+## Run this code
+* Train the networks
+    - Run ```Train_FlowNet.py```
+    - If you want to train FuseNet, displacement cache file calculated by SubpixelCorrNet should be generated first.
+    - If you want to generate your own training dataset, please refer to the [Stereo Speckle Generator](https://github.com/GW-Wang-thu/Generator-of-Stereo-Speckle-images-with-displacement-labels)
+* 2-D displacement (and deformation) calculation
+    - Run ```DispCalculator2D.py```, remember to shift the model filepath and the image filepath to your own ones.
+    - Strain calculation using gradient filter technique is provided.
+* 3-D displacement (and deformation) calculation
+    - Run ```DispCalculator3D.py```, remember to shift the model filepath and the image filepath to your own ones.
+    - The calibration parameters and other settings should be set correctly.
+    - Simple strain calculation code using gradient filter is provided.
 
 ## Pre-trained model
 - Pre-trained parameter file of SubpixelCorrNet can be download from [Google drive](https://drive.google.com/drive/folders/17fP3m60Ab5OKycFhSUtXHN4j7IToi5Np?usp=sharing).
@@ -28,7 +38,7 @@ Pytorch implementation of StrainNet-3D.
 ![Comparison of 3D displacement calculated using StrainNet-3D and 3D-DIC](/imgs/uvw_comparison.png)
 <center>Tabel.1 Comparison of Mean Absolute Error(MAE) of the results (Pixels)</center>
 
-![Tabel1](/imgs/precision_comparison.png)
+![Tabel1](/imgs/precision_comparison.png) 
 <center>Tabel.2 Comparison of the calculation speed(POI/s) </center>
 
 ![Tabel2](/imgs/precision_comparison.png)
