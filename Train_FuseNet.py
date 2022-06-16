@@ -1,49 +1,62 @@
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from LoadData import Fusion_Dataset
-from Models import DispNet, FlowNet, FuseNet
-import torch.nn.functional as F
+from utils.LoadData import Fusion_Dataset, Fusion_Dataset_1
+from Models import FusionNet
 import os
 import time
-import matplotlib.pyplot as plt
 
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 
 def train():
-    epoch_n = 8000
-    batchsize = 8
-    train_dir = "../dataset\\Train/"
-    valid_dir = "../dataset\\Valid/"
-    coord_dir = "../dataset\\coordinates/"
-    outputdir = "./Outputs1/"
+    epoch_n = 1000
+    batchsize = 1
+    train_dir = "I:\\DLDIC_3D_Dataset\\Paper_Exp\\train\\"
+    test_dir = "I:\\DLDIC_3D_Dataset\\Paper_Exp\\valid\\"
+    params_dir = "I:\\DLDIC_3D_Dataset\\Paper_Exp\\parameters\\"
+    outputdir = "./Outputs/"
     fuse_lr = 1e-6
-    step = 4
+    step = 2
+    box = [10, 2038, 10, 2038]
+    stp = (500, 1000)
+    save_raw_uvw = False
+    train_cache_dir = "I:\\DLDIC_3D_Dataset\\Paper_Exp\\train\\\disp_flow_cache\\"
+    test_cache_dir = "I:\\DLDIC_3D_Dataset\\Paper_Exp\\valid\\disp_flow_cache\\"
 
-    disp_model = DispNet.DispNet().cuda()
-    flow_model = FlowNet.DICNN().cuda()
-    fuse_model = FuseNet.FusionNet().cuda()
+    runmode = 1     # 1 - using flow and disparity cache; else - using raw u, v and w cache
+
+    fuse_model = FusionNet.FusionNet_S(params=params_dir + "States_box.json",
+                                     cropbox=[stp[0]+box[0], stp[0]+box[1], stp[1]+box[2], stp[1]+box[3]],
+                                     transpose_matrix=np.loadtxt(params_dir + "Transpose_matrix.txt", delimiter=',')
+                                     ).cuda()
 
     loss_fn = torch.nn.MSELoss().cuda()
     optimizer_fuse = torch.optim.Adam(fuse_model.parameters(), lr=fuse_lr)
+    if runmode == 1:
+        train_dl = DataLoader(Fusion_Dataset(data_dir=train_dir, disp_flow_cache_dir=train_cache_dir, box=box),
+                              batch_size=batchsize,
+                              shuffle=True)
 
-    fuse_train_dl = DataLoader(Fusion_Dataset(train_dir), batch_size=batchsize, shuffle=True)
-    fuse_valid_dl = DataLoader(Fusion_Dataset(valid_dir), batch_size=batchsize, shuffle=True)
+        valid_dl = DataLoader(Fusion_Dataset(data_dir=test_dir, disp_flow_cache_dir=test_cache_dir, box=box),
+                              batch_size=batchsize,
+                              shuffle=False)
+    else:
+        train_dl = DataLoader(Fusion_Dataset_1(data_dir=train_dir, disp_flow_cache_dir=train_cache_dir),
+                              batch_size=batchsize,
+                              shuffle=True)
 
-    coord_x = np.loadtxt(coord_dir+"Disparity_RX.csv")[3:483, 8:648].astype("float32")
-    coord_x = F.interpolate(torch.from_numpy(coord_x).unsqueeze(0).unsqueeze(0).cuda(), (240, 320), mode='bicubic', align_corners=False)
+        valid_dl = DataLoader(Fusion_Dataset_1(data_dir=test_dir, disp_flow_cache_dir=test_cache_dir),
+                              batch_size=batchsize,
+                              shuffle=False)
 
     fuse_Recorder = []
     minimum_fuse_loss = 1e5
     now = time.perf_counter()
 
-    disp_params = torch.load(outputdir + "/disp_best.pth")
-    disp_model.load_state_dict(disp_params)
-    flow_params = torch.load(outputdir + "/flow_best.pth")
-    flow_model.load_state_dict(flow_params)
-    # torch.save(disp_model.state_dict(), outputdir + "/disp_best_v0.pth",  _use_new_zipfile_serialization=False)   # Save model for old version of pytorch
-    # torch.save(flow_model.state_dict(), outputdir + "/flow_best_v0.pth",  _use_new_zipfile_serialization=False)
+    if save_raw_uvw:
+        step = 1
+        fuse_model.eval()
 
     if os.path.exists(outputdir + "/fuse_last.pth"):
         fuse_Recorder = np.loadtxt(outputdir + "/fuse_Recorder.txt", delimiter=",")
@@ -51,66 +64,93 @@ def train():
         fuse_Recorder = list(fuse_Recorder)
         fuse_checkpoint = torch.load(outputdir + "/fuse_last.pth")
         fuse_model.load_state_dict(fuse_checkpoint)
-        # torch.save(fuse_model.state_dict(), outputdir + "/fuse_best_v0.pth", _use_new_zipfile_serialization=False)
 
     for epoch in range(epoch_n):
-        fuse_model.train()
-        disp_model.eval()
-        flow_model.eval()
+        epoch += 1
 
-        # if (epoch+1) % 1000 == 0:
-        #     optimizer_fuse = torch.optim.Adam(flow_model.parameters(), lr=fuse_lr * 0.5)
-
-        if epoch // step < len(fuse_Recorder):
+        if epoch <= (len(fuse_Recorder) - 1) * step:
             continue
 
         fuse_loss_rec = []
 
-        for i, (flow_batch, disp_batch, label_batch) in enumerate(fuse_train_dl):
-            flow_batch, disp_batch, label_batch = flow_batch.cuda(), disp_batch.cuda(), label_batch.cuda()
+        for i, (idx, tup1, tup2, tup3, tup4) in enumerate(train_dl):
+            # flow_input = [tup1[0], tup2[0], tup3[0], tup4[0]]
+            inputs = [tup1[0], tup2[0], tup3[0], tup4[0]]
+            labels = [tup1[1], tup2[1], tup3[1], tup4[1]]
+            # shape = labels[0][0, 0, :, :].shape
+            out_cache = []
+            for m in range(4):
+                if save_raw_uvw:
+                    raw_out, fuse_out = fuse_model(flow_output=inputs[m][:, 0:2, :, :],
+                                                   disp0=inputs[m][:, 2, :, :].unsqueeze(1),
+                                                   disp1=inputs[m][:, 3, :, :].unsqueeze(1))
+                else:
+                    if runmode == 1:
+                        raw_out,  fuse_out = fuse_model(flow_output=inputs[m][:, 0:2, :, :],
+                                              disp0=inputs[m][:, 2, :, :].unsqueeze(1),
+                                              disp1=inputs[m][:, 3, :, :].unsqueeze(1))       # feed flow and disparity
+                    else:
+                        raw_out, fuse_out = fuse_model(flow_output=inputs[m][0, 0, :, :],
+                                                       disp0=inputs[m][0, 1, :, :],
+                                                       disp1=inputs[m][0, 2, :, :], key=1)    # feed raw u, v and w
+                    fuse_model.zero_grad()
+                    loss_fuse = loss_fn(fuse_out, labels[m])
+                    loss_fuse.backward()
+                    optimizer_fuse.step()
+                    fuse_loss_rec.append(loss_fuse.item())
 
-            flow_output_batch = flow_model(flow_batch)
-            disp_output_batch = disp_model(disp_batch) - 6.0
+                if save_raw_uvw:
+                    out_cache.append(raw_out[0, :, :, :].cpu().detach().numpy())
 
-            batch, _, _, _ = flow_output_batch.size()
-            stacked_input = torch.cat((flow_output_batch, disp_output_batch, coord_x.expand(batch, 1, 240, 320)), dim=1)
-            fuse_output_batch = fuse_model(stacked_input)
-
-            fuse_model.zero_grad()
-
-            loss_fuse = loss_fn(F.interpolate(fuse_output_batch, (480, 640), mode='bicubic', align_corners=False)[:, :, 1:-1, 1:-1], label_batch)
-
-            loss_fuse.backward()
-
-            optimizer_fuse.step()
-
-            fuse_loss_rec.append(loss_fuse.item())
+            if save_raw_uvw:
+                np.save(train_cache_dir + str(int(idx.item())) + "_cache_uvw.npy", np.concatenate(out_cache, axis=0))
 
         if epoch % step == 0 or epoch == epoch_n - 1:
 
             train_fuse_loss_mean = np.mean(np.array(fuse_loss_rec), axis=0)
             valid_fuse_loss_rec = []
+            valid_fuse_raw_loss_rec = []
 
-            for i, (flow_batch, disp_batch, label_batch) in enumerate(fuse_valid_dl):
-                flow_batch, disp_batch, label_batch = flow_batch.cuda(), disp_batch.cuda(), label_batch.cuda()
+            for i, (idx, tup1, tup2, tup3, tup4) in enumerate(valid_dl):
+                inputs = [tup1[0], tup2[0], tup3[0], tup4[0]]
+                labels = [tup1[1], tup2[1], tup3[1], tup4[1]]
+                if int(idx.item()) == 10:
+                    pass
+                out_cache = []
+                for m in range(4):
+                    if save_raw_uvw:
+                        raw_out, fuse_out = fuse_model(flow_output=inputs[m][:, 0:2, :, :],
+                                                       disp0=inputs[m][:, 2, :, :].unsqueeze(1),
+                                                       disp1=inputs[m][:, 3, :, :].unsqueeze(1))
+                    else:
 
-                flow_output_batch = flow_model(flow_batch)
-                disp_output_batch = disp_model(disp_batch) - 6.0
+                        if runmode == 1:
+                            raw_out, fuse_out = fuse_model(flow_output=inputs[m][:, 0:2, :, :],
+                                                           disp0=inputs[m][:, 2, :, :].unsqueeze(1),
+                                                           disp1=inputs[m][:, 3, :, :].unsqueeze(1))
+                        else:
+                            raw_out, fuse_out = fuse_model(flow_output=inputs[m][0, 0, :, :],
+                                                           disp0=inputs[m][0, 1, :, :],
+                                                           disp1=inputs[m][0, 2, :, :], key=1)
+                        loss_fuse_out = loss_fn(fuse_out, labels[m])
+                        loss_fuse_raw = loss_fn(raw_out, labels[m])
+                        valid_fuse_loss_rec.append(loss_fuse_out.item())
+                        valid_fuse_raw_loss_rec.append(loss_fuse_raw.item())
 
-                batch, _, _, _ = flow_output_batch.size()
-                stacked_input = torch.cat((flow_output_batch, disp_output_batch, coord_x.expand(batch, 1, 240, 320)), dim=1)
-                fuse_output_batch = fuse_model(stacked_input)
+                    if save_raw_uvw:
+                        out_cache.append(raw_out[0, :, :, :].cpu().detach().numpy())
 
-                loss_fuse = loss_fn(F.interpolate(fuse_output_batch, (480, 640), mode='bicubic', align_corners=False)[:, :, 1:-1, 1:-1], label_batch)
-
-                valid_fuse_loss_rec.append(loss_fuse.item())
+                if save_raw_uvw:  # and not os.path.exists(train_cache_dir + str(int(idx.item())) + "_cache_flow.npy"):
+                    np.save(test_cache_dir + str(int(idx.item())) + "_cache_uvw.npy", np.concatenate(out_cache, axis=0))
 
             valid_fuse_mean_loss = np.mean(np.array(valid_fuse_loss_rec))
-
-            print("Epoch %d," % ((len(fuse_Recorder) - 1) * step), " train flow loss: ", train_fuse_loss_mean,
-                  ", valid flow loss: ", valid_fuse_mean_loss, ", timeconsume %f" % (time.perf_counter() - now))
+            valid_fuse_raw_mean_loss = np.mean(np.array(valid_fuse_raw_loss_rec))
+            print("Epoch %d," % ((len(fuse_Recorder) - 1) * step),
+                  " train flow loss: ", train_fuse_loss_mean,
+                  ", valid flow loss: ", valid_fuse_mean_loss,
+                  ", valid raw flow loss: ", valid_fuse_raw_mean_loss,
+                  ", timeconsume %f" % (time.perf_counter() - now))
             now = time.perf_counter()
-
             fuse_Recorder.append([fuse_lr, train_fuse_loss_mean, valid_fuse_mean_loss])
             if (valid_fuse_mean_loss < minimum_fuse_loss):
                 minimum_fuse_loss = valid_fuse_mean_loss
