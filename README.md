@@ -9,7 +9,7 @@ Pytorch implementation of StrainNet-3D.
 - Simulated stereo speckle images with displacement labels (to train or to evaluate this method) can be found in my another repository [Here](https://github.com/GW-Wang-thu/Generator-of-Stereo-Speckle-images-with-displacement-labels)
 - Core CNN used to calculate subpixel displacement: A light-weight CNN named SubpixelCorrNet (Architecture shows below).
 ![The architecture of SubpixelCorrNet](/imgs/SubpixelCorrNet.png)
-- For algorithm details and the principles, please see ***(unpublished work, update later)
+- For algorithm details and the principles, please see [Wang et al., 2022](https://www.sciencedirect.com/science/article/pii/S0143816622002378)
 
 ## Requests
 - python38
